@@ -77,20 +77,6 @@ public class ItemBasedCFSparkJob implements Serializable {
         }
     }
 
-    static List<Tuple2<Long, Float>> getTopN(List<Tuple2<Long, Float>> list_a,
-                                                   List<Tuple2<Long, Float>> list_b, int topn){
-        List<Tuple2<Long, Float>> top_a = getTopN(list_a, topn);
-        top_a.addAll(getTopN(list_b, topn));
-        return getTopN(top_a, topn);
-    }
-
-    static List<Tuple2<Long, Float>> getTopN(List<Tuple2<Long, Float>> list_a, int n){
-        return list_a.stream()
-                .sorted((a, b) -> b._2.compareTo(a._2))
-                .limit(n)
-                .collect(Collectors.toList());
-    }
-
     /**
      * @param jsc
      * @param data                   format: [(long userid,long itemid,float score),...]
@@ -204,12 +190,10 @@ public class ItemBasedCFSparkJob implements Serializable {
                     return list;
                 })
                 //sort and get topN similary items for item
-                .aggregateByKey(new ArrayList<Tuple2<Long, Float>>(),
-                        (list, t) -> {
-                            list.add(t);
-                            return list;
-                        },
-                        (l1, l2) -> getTopN(l1, l2, maxSimilaritiesPerItem));
+                .aggregateByKey(new MinHeap(maxSimilaritiesPerItem),
+                        (heap, t) -> heap.add(t),
+                        (h1, h2) -> h1.addAll(h2))
+                .mapValues(heap -> heap.getSortedItems());
 
         JavaPairRDD<Long, List<Tuple2<Long, Float>>> user_similaries = item_user_list
                 .join(item_similaries)
