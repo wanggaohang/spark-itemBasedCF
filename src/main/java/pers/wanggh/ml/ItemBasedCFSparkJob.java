@@ -82,6 +82,7 @@ public class ItemBasedCFSparkJob implements Serializable {
      * @param data                   format: [(long userid,long itemid,float score),...]
      * @param numRecommendations
      * @param booleanData
+     * @param minVisitedPerItem      use to filter new item
      * @param maxPrefsPerUser        use to filter too active user
      * @param minPrefsPerUser        use to filter new user
      * @param maxSimilaritiesPerItem
@@ -93,10 +94,12 @@ public class ItemBasedCFSparkJob implements Serializable {
                        JavaRDD<Row> data,
                        final int numRecommendations,
                        final boolean booleanData,
+                       final int minVisitedPerItem,
                        final int maxPrefsPerUser,
                        final int minPrefsPerUser,
                        final int maxSimilaritiesPerItem,
-                       final int maxPrefsPerUserForRec) {
+                       final int maxPrefsPerUserForRec,
+                       final float min_similary) {
         //collect legal user and there visited items
         Map<Long, Tuple2<Set<Long>, Set<Long>>> user_visited = data
                 .filter(row -> row.getFloat(2) > 0)
@@ -134,9 +137,18 @@ public class ItemBasedCFSparkJob implements Serializable {
                 .collectAsMap();
         Broadcast<Map<Long, Tuple2<Set<Long>, Set<Long>>>> user_visited_bd = jsc.broadcast(new HashMap<>(user_visited));
 
+        //collect legal items
+        List<Long> legal_items = data.mapToPair(row -> new Tuple2<Long, Integer>(row.getLong(1), 1))
+                .reduceByKey((a,b) -> a+b)
+                .filter(t -> t._2 >= minVisitedPerItem)
+                .keys()
+                .collect();
+        Broadcast<Set<Long>> legal_items_bd = jsc.broadcast(new HashSet<>(legal_items));
+
         //filter illegal user
         JavaRDD<Row> filted_data = data
-                .filter(row -> user_visited_bd.getValue().containsKey(row.getLong(0)));
+                .filter(row -> user_visited_bd.getValue().containsKey(row.getLong(0))
+                        && legal_items_bd.getValue().contains(row.getLong(1)));
         filted_data.cache();
 
         //user list that visited the same item
@@ -144,6 +156,7 @@ public class ItemBasedCFSparkJob implements Serializable {
                 .mapToPair(row -> new Tuple2<>(row.getLong(1),
                         new Tuple2<Long, Float>(row.getLong(0), row.getFloat(2))))
                 .groupByKey();
+        item_user_list.cache();
 
         //computer sqrt(|item|)
         Map<Long, Float> item_norm = item_user_list
@@ -182,6 +195,7 @@ public class ItemBasedCFSparkJob implements Serializable {
                     float norm_b = item_norm_bd.getValue().get(up.b);
                     return new Tuple2<>(up, t._2 / (float) Math.sqrt(norm_a * norm_b));
                 })
+                .filter(t -> t._2 >= min_similary)
                 //expand matrix
                 .flatMapToPair(t -> {
                     List<Tuple2<Long, Tuple2<Long, Float>>> list = new ArrayList<>(2);
@@ -194,6 +208,7 @@ public class ItemBasedCFSparkJob implements Serializable {
                         (heap, t) -> heap.add(t),
                         (h1, h2) -> h1.addAll(h2))
                 .mapValues(heap -> heap.getSortedItems());
+        item_similaries.cache();
 
         //get user topN recommendtions
         JavaPairRDD<Long, List<Tuple2<Long, Float>>> user_similaries = item_user_list
@@ -284,18 +299,22 @@ public class ItemBasedCFSparkJob implements Serializable {
         ItemBasedCFSparkJob job = new ItemBasedCFSparkJob();
         int numRecommendations = 100;
         boolean booleanData = false;
+        int minVisitedPerItem = 1;
         int maxPrefsPerUser = 500;
         int minPrefsPerUser = 2;
         int maxSimilaritiesPerItem = 30;
         int maxPrefsPerUserForRec = 30;
+        float min_similary = 0.4f;
         CFModel model = job.run(jsc,
                 data,
                 numRecommendations,
                 booleanData,
+                minVisitedPerItem,
                 maxPrefsPerUser,
                 minPrefsPerUser,
                 maxSimilaritiesPerItem,
-                maxPrefsPerUserForRec);
+                maxPrefsPerUserForRec,
+                min_similary);
 
         Map<Long, List<Tuple2<Long, Float>>> item_similaries_map = model.getItem_similaries().collectAsMap();
         System.out.println("=============== item_similaries_map ==============\n");
