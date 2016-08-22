@@ -9,7 +9,7 @@ import java.util.PriorityQueue;
 import java.util.stream.Collectors;
 
 /**
- * Created by wanggh on 16/8/20.
+ * @author gaohangwang@gmail.com
  */
 public class MinHeap implements Serializable {
     private int max_num;

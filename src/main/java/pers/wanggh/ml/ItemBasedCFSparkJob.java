@@ -195,6 +195,7 @@ public class ItemBasedCFSparkJob implements Serializable {
                         (h1, h2) -> h1.addAll(h2))
                 .mapValues(heap -> heap.getSortedItems());
 
+        //get user topN recommendtions
         JavaPairRDD<Long, List<Tuple2<Long, Float>>> user_similaries = item_user_list
                 .join(item_similaries)
                 .flatMapToPair(t -> {
