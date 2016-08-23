@@ -88,6 +88,7 @@ public class ItemBasedCFSparkJob implements Serializable {
      * @param maxSimilaritiesPerItem
      * @param maxPrefsPerUserForRec  in final computer user's recommendations stage,
      *                               only use top maxPrefsPerUserForRec number of prefs for each user
+     * @param min_similary           min similary between items
      * @return ItemBasedCFSparkJob.CFModel model
      */
     public CFModel run(JavaSparkContext jsc,
@@ -207,7 +208,14 @@ public class ItemBasedCFSparkJob implements Serializable {
                 .aggregateByKey(new MinHeap(maxSimilaritiesPerItem),
                         (heap, t) -> heap.add(t),
                         (h1, h2) -> h1.addAll(h2))
-                .mapValues(heap -> heap.getSortedItems());
+                .mapValues(heap -> {
+                    List<Tuple2<Long, Float>> tops = heap.getSortedItems();
+                    //normalized similary
+                    float max = tops.get(0)._2;
+                    return tops.stream()
+                            .map(t -> new Tuple2<>(t._1, t._2/max))
+                            .collect(Collectors.toList());
+                });
         item_similaries.cache();
 
         //get user topN recommendtions
